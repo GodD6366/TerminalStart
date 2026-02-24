@@ -40,6 +40,8 @@ const DEFAULT_LAYOUTS: Layouts = {
 const todoistDefaults: TodoistConfig = {
     apiKey: '',
     enabled: false,
+    sourceType: 'local',
+    customBaseUrl: '',
 };
 
 const marketDefaults: MarketConfig = {

@@ -28,7 +28,17 @@ function saveCache(tasks: TodoItem[]) {
     } catch { /* quota exceeded — ignore */ }
 }
 
-async function checkHostPermission(): Promise<boolean> {
+// 获取 baseUrl（根据数据源类型）
+function getBaseUrl(config: TodoistConfig): string {
+    if (config.sourceType === 'custom' && config.customBaseUrl) {
+        return config.customBaseUrl.replace(/\/$/, '');
+    }
+    return TODOIST_BASE;
+}
+
+async function checkHostPermission(config: TodoistConfig): Promise<boolean> {
+    // 自定义接口不需要 Chrome 扩展权限
+    if (config.sourceType === 'custom') return true;
     if (typeof chrome === 'undefined' || !chrome.permissions) return true;
     return chrome.permissions.contains({ origins: TODOIST_ORIGINS });
 }
@@ -38,16 +48,19 @@ export async function requestTodoistPermission(): Promise<boolean> {
     return chrome.permissions.request({ origins: TODOIST_ORIGINS });
 }
 
-async function todoistFetch(path: string, apiKey: string, options?: RequestInit): Promise<Response> {
-    const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-    };
+async function todoistFetch(path: string, apiKey: string, options?: RequestInit, baseUrl?: string): Promise<Response> {
+    const headers: Record<string, string> = {};
+    // 认证可选
+    if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+    }
     // Only set Content-Type for requests with a body
     if (options?.body) {
         headers['Content-Type'] = 'application/json';
     }
 
-    const res = await fetch(`${TODOIST_BASE}${path}`, {
+    const url = `${baseUrl || TODOIST_BASE}${path}`;
+    const res = await fetch(url, {
         ...options,
         headers: {
             ...headers,
@@ -58,7 +71,7 @@ async function todoistFetch(path: string, apiKey: string, options?: RequestInit)
         throw new Error('invalid api key');
     }
     if (!res.ok) {
-        throw new Error(`todoist error (${res.status})`);
+        throw new Error(`api error (${res.status})`);
     }
     return res;
 }
@@ -81,7 +94,8 @@ function extractTasks(data: any): any[] {
 }
 
 export function useTodoistSync(config: TodoistConfig) {
-    const isActive = config.enabled && !!config.apiKey;
+    // 使用 sourceType 判断是否激活
+    const isActive = config.sourceType !== 'local';
 
     const [tasks, setTasks] = useState<TodoItem[]>(() => {
         if (!isActive) return [];
@@ -92,14 +106,16 @@ export function useTodoistSync(config: TodoistConfig) {
     const [error, setError] = useState<string | null>(null);
     const [needsPermission, setNeedsPermission] = useState(false);
 
-    // Track latest apiKey in a ref to avoid stale closures
+    // Track latest config in refs to avoid stale closures
     const apiKeyRef = useRef(config.apiKey);
     apiKeyRef.current = config.apiKey;
+    const configRef = useRef(config);
+    configRef.current = config;
 
     const fetchTasks = useCallback(async () => {
-        if (!config.apiKey) return;
+        const baseUrl = getBaseUrl(config);
 
-        const hasPermission = await checkHostPermission();
+        const hasPermission = await checkHostPermission(config);
         if (!hasPermission) {
             setNeedsPermission(true);
             setLoading(false);
@@ -110,7 +126,7 @@ export function useTodoistSync(config: TodoistConfig) {
         setLoading(true);
         setError(null);
         try {
-            const res = await todoistFetch('/tasks', config.apiKey);
+            const res = await todoistFetch('/tasks', config.apiKey, undefined, baseUrl);
             const data = await res.json();
             const mapped = extractTasks(data).map(mapTodoistTask);
             setTasks(mapped);
@@ -120,9 +136,9 @@ export function useTodoistSync(config: TodoistConfig) {
         } finally {
             setLoading(false);
         }
-    }, [config.apiKey]);
+    }, [config]);
 
-    // Fetch on mount / when apiKey changes (only if active)
+    // Fetch on mount / when config changes (only if active)
     useEffect(() => {
         if (!isActive) {
             setTasks([]);
@@ -138,7 +154,7 @@ export function useTodoistSync(config: TodoistConfig) {
 
     const addTask = useCallback(async (text: string, due?: string) => {
         const apiKey = apiKeyRef.current;
-        if (!apiKey) return;
+        const baseUrl = getBaseUrl(configRef.current);
 
         // Optimistic: add a temporary task
         const tempId = `temp-${Date.now()}`;
@@ -151,11 +167,11 @@ export function useTodoistSync(config: TodoistConfig) {
             const res = await todoistFetch('/tasks', apiKey, {
                 method: 'POST',
                 body: JSON.stringify(body),
-            });
+            }, baseUrl);
             const created = await res.json();
             // Replace temp task with real one
             setTasks(prev => prev.map(t => t.id === tempId ? mapTodoistTask(created) : t));
-            saveCache(await fetchAndReturn(apiKey));
+            saveCache(await fetchAndReturn(apiKey, baseUrl));
         } catch (err: any) {
             // Revert optimistic update
             setTasks(prev => prev.filter(t => t.id !== tempId));
@@ -165,16 +181,16 @@ export function useTodoistSync(config: TodoistConfig) {
 
     const toggleTask = useCallback(async (id: string, currentDone: boolean) => {
         const apiKey = apiKeyRef.current;
-        if (!apiKey) return;
+        const baseUrl = getBaseUrl(configRef.current);
 
         // Optimistic update
         setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !currentDone } : t));
 
         try {
             const endpoint = currentDone ? `/tasks/${id}/reopen` : `/tasks/${id}/close`;
-            await todoistFetch(endpoint, apiKey, { method: 'POST' });
+            await todoistFetch(endpoint, apiKey, { method: 'POST' }, baseUrl);
             // Refetch to get accurate state (completed tasks disappear from GET /tasks)
-            const fresh = await fetchAndReturn(apiKey);
+            const fresh = await fetchAndReturn(apiKey, baseUrl);
             setTasks(fresh);
             saveCache(fresh);
         } catch (err: any) {
@@ -186,7 +202,7 @@ export function useTodoistSync(config: TodoistConfig) {
 
     const removeTask = useCallback(async (id: string) => {
         const apiKey = apiKeyRef.current;
-        if (!apiKey) return;
+        const baseUrl = getBaseUrl(configRef.current);
 
         // Optimistic removal
         let removed: TodoItem | undefined;
@@ -196,8 +212,8 @@ export function useTodoistSync(config: TodoistConfig) {
         });
 
         try {
-            await todoistFetch(`/tasks/${id}`, apiKey, { method: 'DELETE' });
-            saveCache(await fetchAndReturn(apiKey));
+            await todoistFetch(`/tasks/${id}`, apiKey, { method: 'DELETE' }, baseUrl);
+            saveCache(await fetchAndReturn(apiKey, baseUrl));
         } catch (err: any) {
             // Revert
             if (removed) {
@@ -211,9 +227,9 @@ export function useTodoistSync(config: TodoistConfig) {
 }
 
 // Helper to fetch fresh task list
-async function fetchAndReturn(apiKey: string): Promise<TodoItem[]> {
+async function fetchAndReturn(apiKey: string, baseUrl: string): Promise<TodoItem[]> {
     try {
-        const res = await todoistFetch('/tasks', apiKey);
+        const res = await todoistFetch('/tasks', apiKey, undefined, baseUrl);
         const data = await res.json();
         return extractTasks(data).map(mapTodoistTask);
     } catch {

@@ -13,12 +13,13 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ tasks, setTasks, todoist
     const [newTaskText, setNewTaskText] = useState('');
 
     const todoist = useTodoistSync(todoistConfig);
-    const isTodoistMode = todoistConfig.enabled && !!todoistConfig.apiKey;
+    // 使用 sourceType 判断是否为远程同步模式
+    const isSyncMode = todoistConfig.sourceType !== 'local';
 
-    const effectiveTasks = isTodoistMode ? todoist.tasks : tasks;
+    const effectiveTasks = isSyncMode ? todoist.tasks : tasks;
 
     const toggleTask = (id: number | string) => {
-        if (isTodoistMode) {
+        if (isSyncMode) {
             const task = todoist.tasks.find(t => t.id === id);
             if (task) todoist.toggleTask(String(id), task.done);
         } else {
@@ -28,7 +29,7 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ tasks, setTasks, todoist
 
     const removeTask = (e: React.MouseEvent, id: number | string) => {
         e.stopPropagation();
-        if (isTodoistMode) {
+        if (isSyncMode) {
             todoist.removeTask(String(id));
         } else {
             setTasks(tasks.filter(t => t.id !== id));
@@ -39,11 +40,11 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ tasks, setTasks, todoist
         e.preventDefault();
         if (!newTaskText.trim()) return;
 
-        const { text, due } = isTodoistMode
+        const { text, due } = isSyncMode
             ? extractDueForTodoist(newTaskText)
             : extractTime(newTaskText);
 
-        if (isTodoistMode) {
+        if (isSyncMode) {
             todoist.addTask(text, due);
         } else {
             const newTask: TodoItem = {
@@ -64,18 +65,18 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ tasks, setTasks, todoist
             <div className="text-[var(--color-muted)] mb-2 text-xs flex justify-between">
                 <span>{effectiveTasks.length - doneCount} remaining</span>
                 <span>
-                    {isTodoistMode && todoist.loading && <span className="opacity-60">syncing... </span>}
+                    {isSyncMode && todoist.loading && <span className="opacity-60">syncing... </span>}
                     {doneCount} done
                 </span>
             </div>
 
-            {isTodoistMode && todoist.error && (
+            {isSyncMode && todoist.error && (
                 <div className="text-red-500 text-[10px] mb-1 opacity-80">
-                    todoist: {todoist.error}
+                    sync: {todoist.error}
                 </div>
             )}
 
-            {isTodoistMode && todoist.needsPermission && (
+            {isSyncMode && todoist.needsPermission && (
                 <div className="flex-1 flex items-center justify-center">
                     <button
                         onClick={async () => {
@@ -92,10 +93,10 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ tasks, setTasks, todoist
             <ul className="flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-0">
                 {effectiveTasks.length === 0 && !todoist.loading && (
                     <li className="text-[var(--color-muted)] italic text-sm py-2 text-center opacity-50">
-                        {isTodoistMode ? 'no tasks in todoist' : 'empty list...'}
+                        {isSyncMode ? 'no tasks' : 'empty list...'}
                     </li>
                 )}
-                {effectiveTasks.length === 0 && isTodoistMode && todoist.loading && (
+                {effectiveTasks.length === 0 && isSyncMode && todoist.loading && (
                     <li className="text-[var(--color-muted)] italic text-sm py-2 text-center opacity-50">
                         syncing...
                     </li>

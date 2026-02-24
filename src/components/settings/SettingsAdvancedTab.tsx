@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AsciiSlider } from '@/components/ui/AsciiSlider';
-import { MarketConfig, MarketProvider, TodoistConfig } from '@/types';
+import { MarketConfig, MarketProvider, TodoistConfig, TodoSourceType } from '@/types';
 
 interface SettingsAdvancedTabProps {
     showWidgetTitles: boolean;
@@ -274,36 +274,69 @@ export const SettingsAdvancedTab: React.FC<SettingsAdvancedTabProps> = ({
                 </div>
             </div>
 
-            {/* todoist integration */}
+            {/* todo widget integration */}
             {activeWidgets['todo'] && todoistConfig && onTodoistConfigChange && (
                 <div className="border border-[var(--color-border)] p-4 space-y-3">
                     <h3 className="text-[var(--color-accent)] font-bold">⬡ Todo Widget</h3>
 
-                    <div
-                        onClick={() => onTodoistConfigChange({ ...todoistConfig, enabled: !todoistConfig.enabled })}
-                        className="flex items-center gap-2 cursor-pointer select-none group"
-                    >
-                        <span className="font-mono text-[var(--color-accent)] font-bold">
-                            {todoistConfig.enabled ? '[x]' : '[ ]'}
-                        </span>
-                        <span className="text-[var(--color-fg)] text-sm group-hover:text-[var(--color-accent)]">
-                            Sync with Todoist
-                        </span>
+                    {/* 数据源选择 */}
+                    <div className="flex flex-col gap-1">
+                        <span className="text-[var(--color-muted)] text-xs">Data Source</span>
+                        <div className="flex flex-wrap gap-3">
+                            {([
+                                { id: 'local' as TodoSourceType, label: 'Local' },
+                                { id: 'todoist' as TodoSourceType, label: 'Todoist' },
+                                { id: 'custom' as TodoSourceType, label: 'Custom API' },
+                            ]).map((src) => (
+                                <div
+                                    key={src.id}
+                                    onClick={() => onTodoistConfigChange({ ...todoistConfig, sourceType: src.id })}
+                                    className="flex items-center gap-2 cursor-pointer select-none group"
+                                >
+                                    <span className="font-mono text-[var(--color-accent)] font-bold">
+                                        {todoistConfig.sourceType === src.id ? '[x]' : '[ ]'}
+                                    </span>
+                                    <span className="text-[var(--color-fg)] group-hover:text-[var(--color-accent)] text-sm">
+                                        {src.label}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
-                    {todoistConfig.enabled && (
+                    {/* 自定义 URL 输入（仅当选择 custom 时显示） */}
+                    {todoistConfig.sourceType === 'custom' && (
                         <div className="flex flex-col gap-1">
-                            <span className="text-[var(--color-muted)] text-xs">Todoist API Token</span>
+                            <span className="text-[var(--color-muted)] text-xs">Custom API Base URL</span>
+                            <input
+                                type="url"
+                                placeholder="https://your-api.example.com/api/v1"
+                                className="bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-fg)] px-2 py-1 text-sm focus:border-[var(--color-accent)] outline-none w-full select-text font-mono"
+                                value={todoistConfig.customBaseUrl || ''}
+                                onChange={(e) => onTodoistConfigChange({ ...todoistConfig, customBaseUrl: e.target.value })}
+                            />
+                            <span className="text-[var(--color-muted)] text-[10px] opacity-60">
+                                接口需兼容 Todoist API 格式：GET /tasks, POST /tasks 等
+                            </span>
+                        </div>
+                    )}
+
+                    {/* API Key 输入（todoist 和 custom 都可用，可选） */}
+                    {todoistConfig.sourceType !== 'local' && (
+                        <div className="flex flex-col gap-1">
+                            <span className="text-[var(--color-muted)] text-xs">API Token (optional)</span>
                             <input
                                 type="password"
-                                placeholder="Enter your Todoist API token"
+                                placeholder={todoistConfig.sourceType === 'todoist' ? "Enter your Todoist API token" : "Enter API token if required"}
                                 className="bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-fg)] px-2 py-1 text-sm focus:border-[var(--color-accent)] outline-none w-full select-text font-mono"
                                 value={todoistConfig.apiKey}
                                 onChange={(e) => onTodoistConfigChange({ ...todoistConfig, apiKey: e.target.value })}
                             />
-                            <span className="text-[var(--color-muted)] text-[10px] opacity-60">
-                                Settings &gt; Integrations &gt; Developer on todoist.com. Stored locally in your browser.
-                            </span>
+                            {todoistConfig.sourceType === 'todoist' && (
+                                <span className="text-[var(--color-muted)] text-[10px] opacity-60">
+                                    Settings &gt; Integrations &gt; Developer on todoist.com. Stored locally in your browser.
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>

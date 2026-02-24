@@ -35,9 +35,14 @@ export interface TodoItem {
   due?: string;
 }
 
+// Todo 数据源类型
+export type TodoSourceType = 'local' | 'todoist' | 'custom';
+
 export interface TodoistConfig {
   apiKey: string;
   enabled: boolean;
+  sourceType: TodoSourceType;      // 数据源类型
+  customBaseUrl: string;           // 自定义 API 的 baseUrl
 }
 
 export interface Link {
