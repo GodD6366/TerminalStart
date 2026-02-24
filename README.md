@@ -53,6 +53,20 @@ Sync your todo widget with Todoist using a personal API token.
 
 Todoist's NLP handles parsing. Local mode still supports time-only syntax (e.g. `standup 9am`).
 
+### Custom API task filters
+
+If you use **Settings > Advanced > Todo Widget > Custom API**, you can now set task filters for `GET /tasks`:
+
+- Click `[ LOAD /projects ]` to fetch groups from `/api/v1/projects`
+- Choose filter mode: include / exclude
+- Select groups directly from the fetched list (writes project IDs automatically)
+- Include project IDs (`project_ids`)
+- Exclude project IDs (`exclude_project_ids`)
+- Include project names (`project_names`, case-insensitive on server side)
+- Exclude project names (`exclude_project_names`, case-insensitive on server side)
+
+All four fields support comma-separated values and can be combined. The request applies include filters first, then exclude filters.
+
 ## Build
 
 ### Requirements
@@ -96,4 +110,3 @@ Runs e2e tests against the extension using Chromium.
 
 - Hover over the top right section for settings.
 - API tokens are stored locally in your browser and never sent anywhere except the Todoist API.
-

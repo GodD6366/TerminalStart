@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AsciiSlider } from '@/components/ui/AsciiSlider';
 import { MarketConfig, MarketProvider, TodoistConfig, TodoSourceType } from '@/types';
+import { requestTodoistPermission } from '@/hooks/useTodoistSync';
 
 interface SettingsAdvancedTabProps {
     showWidgetTitles: boolean;
@@ -49,6 +50,67 @@ interface SettingsAdvancedTabProps {
     onTodoistConfigChange?: (config: TodoistConfig) => void;
 }
 
+type ProjectFilterMode = 'include' | 'exclude';
+
+interface ProjectOption {
+    id: string;
+    name: string;
+}
+
+function splitCommaSeparated(raw: string | undefined): string[] {
+    if (!raw) return [];
+    return raw
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function normalizeBaseUrl(raw: string): string | null {
+    const normalized = raw.trim().replace(/\/$/, '');
+    if (!normalized) return null;
+    try {
+        const parsed = new URL(normalized);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        return normalized;
+    } catch {
+        return null;
+    }
+}
+
+function extractProjectOptions(payload: any): ProjectOption[] {
+    const list = Array.isArray(payload)
+        ? payload
+        : (Array.isArray(payload?.results) ? payload.results : Array.isArray(payload?.items) ? payload.items : []);
+
+    return list
+        .map((item: any) => {
+            const id = item?.id ?? item?.project_id ?? item?.gid;
+            const name = item?.name ?? item?.project_name ?? item?.title;
+            if (id === undefined || id === null || !name) return null;
+            return { id: String(id), name: String(name) };
+        })
+        .filter(Boolean)
+        .sort((a: ProjectOption, b: ProjectOption) => a.name.localeCompare(b.name, 'zh-Hans-CN', { sensitivity: 'base' }));
+}
+
+async function fetchProjects(baseUrl: string, apiKey: string): Promise<ProjectOption[]> {
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const res = await fetch(`${baseUrl}/projects`, { headers });
+    if (res.status === 401 || res.status === 403) {
+        throw new Error('invalid api key');
+    }
+    if (!res.ok) {
+        throw new Error(`api error (${res.status})`);
+    }
+
+    const data = await res.json();
+    return extractProjectOptions(data);
+}
+
 export const SettingsAdvancedTab: React.FC<SettingsAdvancedTabProps> = ({
     showWidgetTitles,
     onToggleWidgetTitles,
@@ -86,6 +148,79 @@ export const SettingsAdvancedTab: React.FC<SettingsAdvancedTabProps> = ({
     onTodoistConfigChange,
 }) => {
     const [symbolsInput, setSymbolsInput] = useState(marketConfig?.symbols.join(', ') ?? '');
+    const [projectFilterMode, setProjectFilterMode] = useState<ProjectFilterMode>('include');
+    const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+    const [projectsLoading, setProjectsLoading] = useState(false);
+    const [projectsError, setProjectsError] = useState('');
+
+    const handleTodoistConfigChange = (patch: Partial<TodoistConfig>) => {
+        if (!todoistConfig || !onTodoistConfigChange) return;
+        onTodoistConfigChange({ ...todoistConfig, ...patch });
+    };
+
+    const includeProjectIds = splitCommaSeparated(todoistConfig?.projectIds);
+    const excludeProjectIds = splitCommaSeparated(todoistConfig?.excludeProjectIds);
+    const activeProjectIds = projectFilterMode === 'include' ? includeProjectIds : excludeProjectIds;
+
+    const setProjectIdsByMode = (ids: string[]) => {
+        const value = ids.join(',');
+        if (projectFilterMode === 'include') {
+            handleTodoistConfigChange({ projectIds: value });
+            return;
+        }
+        handleTodoistConfigChange({ excludeProjectIds: value });
+    };
+
+    const toggleProjectByMode = (projectId: string) => {
+        const next = activeProjectIds.includes(projectId)
+            ? activeProjectIds.filter((id) => id !== projectId)
+            : [...activeProjectIds, projectId];
+        setProjectIdsByMode(next);
+    };
+
+    const clearModeProjects = () => {
+        setProjectIdsByMode([]);
+    };
+
+    const loadProjects = async () => {
+        if (!todoistConfig) return;
+
+        const baseUrl = normalizeBaseUrl(todoistConfig.customBaseUrl);
+        if (!baseUrl) {
+            setProjectsError('Please enter a valid Custom API Base URL');
+            setProjectOptions([]);
+            return;
+        }
+
+        setProjectsLoading(true);
+        setProjectsError('');
+        try {
+            const granted = await requestTodoistPermission(todoistConfig);
+            if (!granted) {
+                setProjectsError('Host permission for this API origin was not granted');
+                setProjectOptions([]);
+                return;
+            }
+
+            const projects = await fetchProjects(baseUrl, todoistConfig.apiKey);
+            setProjectOptions(projects);
+            if (projects.length === 0) {
+                setProjectsError('No projects found. Check /api/v1/projects response shape');
+            }
+        } catch (err: any) {
+            if (err?.message === 'invalid api key') {
+                setProjectsError('API token invalid or not authorized for /projects');
+            } else if (typeof err?.message === 'string' && err.message.startsWith('api error')) {
+                setProjectsError(`Failed to load projects: ${err.message}`);
+            } else {
+                setProjectsError('Failed to load projects. Check API URL, permissions, and network');
+            }
+            setProjectOptions([]);
+        } finally {
+            setProjectsLoading(false);
+        }
+    };
+
     return (
         <div className="space-y-6">
 
@@ -290,7 +425,7 @@ export const SettingsAdvancedTab: React.FC<SettingsAdvancedTabProps> = ({
                             ]).map((src) => (
                                 <div
                                     key={src.id}
-                                    onClick={() => onTodoistConfigChange({ ...todoistConfig, sourceType: src.id })}
+                                    onClick={() => handleTodoistConfigChange({ sourceType: src.id })}
                                     className="flex items-center gap-2 cursor-pointer select-none group"
                                 >
                                     <span className="font-mono text-[var(--color-accent)] font-bold">
@@ -313,10 +448,104 @@ export const SettingsAdvancedTab: React.FC<SettingsAdvancedTabProps> = ({
                                 placeholder="https://your-api.example.com/api/v1"
                                 className="bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-fg)] px-2 py-1 text-sm focus:border-[var(--color-accent)] outline-none w-full select-text font-mono"
                                 value={todoistConfig.customBaseUrl || ''}
-                                onChange={(e) => onTodoistConfigChange({ ...todoistConfig, customBaseUrl: e.target.value })}
+                                onChange={(e) => handleTodoistConfigChange({ customBaseUrl: e.target.value })}
                             />
                             <span className="text-[var(--color-muted)] text-[10px] opacity-60">
-                                接口需兼容 Todoist API 格式：GET /tasks, POST /tasks 等
+                                API should be Todoist-compatible: GET /tasks, POST /tasks, etc.
+                            </span>
+                        </div>
+                    )}
+
+                    {/* 自定义 API 过滤（仅 GET /tasks） */}
+                    {todoistConfig.sourceType === 'custom' && (
+                        <div className="flex flex-col gap-2 border border-[var(--color-border)] border-dashed p-3">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[var(--color-muted)] text-xs">Project Filters (GET /tasks only)</span>
+                                <button
+                                    type="button"
+                                    onClick={loadProjects}
+                                    disabled={projectsLoading}
+                                    className="px-2 py-1 border border-[var(--color-border)] text-[var(--color-fg)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] text-xs font-mono no-radius disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {projectsLoading ? '[ LOADING... ]' : '[ LOAD /projects ]'}
+                                </button>
+                            </div>
+
+                            <div className="flex flex-wrap gap-3">
+                                <div
+                                    onClick={() => setProjectFilterMode('include')}
+                                    className="flex items-center gap-2 cursor-pointer select-none group"
+                                >
+                                    <span className="font-mono text-[var(--color-accent)] font-bold">
+                                        {projectFilterMode === 'include' ? '[x]' : '[ ]'}
+                                    </span>
+                                    <span className="text-[var(--color-fg)] text-xs group-hover:text-[var(--color-accent)]">
+                                        Include Mode (project_ids)
+                                    </span>
+                                </div>
+                                <div
+                                    onClick={() => setProjectFilterMode('exclude')}
+                                    className="flex items-center gap-2 cursor-pointer select-none group"
+                                >
+                                    <span className="font-mono text-[var(--color-accent)] font-bold">
+                                        {projectFilterMode === 'exclude' ? '[x]' : '[ ]'}
+                                    </span>
+                                    <span className="text-[var(--color-fg)] text-xs group-hover:text-[var(--color-accent)]">
+                                        Exclude Mode (exclude_project_ids)
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 text-[10px] text-[var(--color-muted)]">
+                                <span>
+                                    Selected: include {includeProjectIds.length}, exclude {excludeProjectIds.length}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={clearModeProjects}
+                                    className="px-2 py-0.5 border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] no-radius"
+                                >
+                                    Clear Current Mode
+                                </button>
+                            </div>
+
+                            <div className="max-h-48 overflow-y-auto border border-[var(--color-border)] p-2 space-y-1">
+                                {projectOptions.length === 0 && (
+                                    <div className="text-[var(--color-muted)] text-xs opacity-70">
+                                        {projectsLoading ? 'Loading projects...' : 'Click [ LOAD /projects ] to fetch and select projects'}
+                                    </div>
+                                )}
+
+                                {projectOptions.map((project) => {
+                                    const selected = activeProjectIds.includes(project.id);
+                                    return (
+                                        <div
+                                            key={project.id}
+                                            onClick={() => toggleProjectByMode(project.id)}
+                                            className="flex items-center gap-2 cursor-pointer select-none group text-xs"
+                                        >
+                                            <span className="font-mono text-[var(--color-accent)] font-bold">
+                                                {selected ? '[x]' : '[ ]'}
+                                            </span>
+                                            <span className="text-[var(--color-fg)] group-hover:text-[var(--color-accent)]">
+                                                {project.name}
+                                            </span>
+                                            <span className="text-[var(--color-muted)] opacity-70 font-mono">
+                                                ({project.id})
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {projectsError && (
+                                <span className="text-red-400 text-[10px] opacity-90">
+                                    {projectsError}
+                                </span>
+                            )}
+
+                            <span className="text-[var(--color-muted)] text-[10px] opacity-60">
+                                Selected projects are written to ID params. Server order: include first, then exclude.
                             </span>
                         </div>
                     )}
@@ -330,7 +559,7 @@ export const SettingsAdvancedTab: React.FC<SettingsAdvancedTabProps> = ({
                                 placeholder={todoistConfig.sourceType === 'todoist' ? "Enter your Todoist API token" : "Enter API token if required"}
                                 className="bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-fg)] px-2 py-1 text-sm focus:border-[var(--color-accent)] outline-none w-full select-text font-mono"
                                 value={todoistConfig.apiKey}
-                                onChange={(e) => onTodoistConfigChange({ ...todoistConfig, apiKey: e.target.value })}
+                                onChange={(e) => handleTodoistConfigChange({ apiKey: e.target.value })}
                             />
                             {todoistConfig.sourceType === 'todoist' && (
                                 <span className="text-[var(--color-muted)] text-[10px] opacity-60">

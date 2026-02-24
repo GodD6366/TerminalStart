@@ -43,6 +43,10 @@ export interface TodoistConfig {
   enabled: boolean;
   sourceType: TodoSourceType;      // 数据源类型
   customBaseUrl: string;           // 自定义 API 的 baseUrl
+  projectIds: string;              // 包含分组 ID（逗号分隔）
+  excludeProjectIds: string;       // 排除分组 ID（逗号分隔）
+  projectNames: string;            // 包含分组名称（逗号分隔）
+  excludeProjectNames: string;     // 排除分组名称（逗号分隔）
 }
 
 export interface Link {

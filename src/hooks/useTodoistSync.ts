@@ -120,6 +120,37 @@ function extractTasks(data: any): any[] {
     return [];
 }
 
+function splitCommaSeparated(raw: string | undefined): string[] {
+    if (!raw) return [];
+    return raw
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+// 仅自定义 API 的 GET /tasks 支持这些过滤参数
+function buildTasksPath(config: TodoistConfig): string {
+    if (config.sourceType !== 'custom') return '/tasks';
+
+    const entries: string[] = [];
+    const pushParam = (key: string, rawValue: string | undefined) => {
+        const values = splitCommaSeparated(rawValue);
+        if (values.length === 0) return;
+        // 服务端要求逗号分隔，保留分隔逗号不编码；单值内部仍做 URL 编码
+        const encodedList = values.map((value) => encodeURIComponent(value)).join(',');
+        entries.push(`${encodeURIComponent(key)}=${encodedList}`);
+    };
+
+    // 与服务端逻辑一致：先指定包含，再指定排除
+    pushParam('project_ids', config.projectIds);
+    pushParam('project_names', config.projectNames);
+    pushParam('exclude_project_ids', config.excludeProjectIds);
+    pushParam('exclude_project_names', config.excludeProjectNames);
+
+    const query = entries.join('&');
+    return query ? `/tasks?${query}` : '/tasks';
+}
+
 export function useTodoistSync(config: TodoistConfig) {
     // 使用 sourceType 判断是否激活
     const isActive = config.sourceType !== 'local';
@@ -141,6 +172,7 @@ export function useTodoistSync(config: TodoistConfig) {
 
     const fetchTasks = useCallback(async () => {
         const baseUrl = getBaseUrl(config);
+        const tasksPath = buildTasksPath(config);
 
         if (config.sourceType === 'custom' && !getCustomApiOriginPattern(config.customBaseUrl)) {
             setNeedsPermission(false);
@@ -160,7 +192,7 @@ export function useTodoistSync(config: TodoistConfig) {
         setLoading(true);
         setError(null);
         try {
-            const res = await todoistFetch('/tasks', config.apiKey, undefined, baseUrl);
+            const res = await todoistFetch(tasksPath, config.apiKey, undefined, baseUrl);
             const data = await res.json();
             const mapped = extractTasks(data).map(mapTodoistTask);
             setTasks(mapped);
@@ -205,7 +237,7 @@ export function useTodoistSync(config: TodoistConfig) {
             const created = await res.json();
             // Replace temp task with real one
             setTasks(prev => prev.map(t => t.id === tempId ? mapTodoistTask(created) : t));
-            saveCache(await fetchAndReturn(apiKey, baseUrl));
+            saveCache(await fetchAndReturn(apiKey, baseUrl, configRef.current));
         } catch (err: any) {
             // Revert optimistic update
             setTasks(prev => prev.filter(t => t.id !== tempId));
@@ -224,7 +256,7 @@ export function useTodoistSync(config: TodoistConfig) {
             const endpoint = currentDone ? `/tasks/${id}/reopen` : `/tasks/${id}/close`;
             await todoistFetch(endpoint, apiKey, { method: 'POST' }, baseUrl);
             // Refetch to get accurate state (completed tasks disappear from GET /tasks)
-            const fresh = await fetchAndReturn(apiKey, baseUrl);
+            const fresh = await fetchAndReturn(apiKey, baseUrl, configRef.current);
             setTasks(fresh);
             saveCache(fresh);
         } catch (err: any) {
@@ -247,7 +279,7 @@ export function useTodoistSync(config: TodoistConfig) {
 
         try {
             await todoistFetch(`/tasks/${id}`, apiKey, { method: 'DELETE' }, baseUrl);
-            saveCache(await fetchAndReturn(apiKey, baseUrl));
+            saveCache(await fetchAndReturn(apiKey, baseUrl, configRef.current));
         } catch (err: any) {
             // Revert
             if (removed) {
@@ -261,9 +293,9 @@ export function useTodoistSync(config: TodoistConfig) {
 }
 
 // Helper to fetch fresh task list
-async function fetchAndReturn(apiKey: string, baseUrl: string): Promise<TodoItem[]> {
+async function fetchAndReturn(apiKey: string, baseUrl: string, config: TodoistConfig): Promise<TodoItem[]> {
     try {
-        const res = await todoistFetch('/tasks', apiKey, undefined, baseUrl);
+        const res = await todoistFetch(buildTasksPath(config), apiKey, undefined, baseUrl);
         const data = await res.json();
         return extractTasks(data).map(mapTodoistTask);
     } catch {

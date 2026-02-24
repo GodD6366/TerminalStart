@@ -42,6 +42,10 @@ const todoistDefaults: TodoistConfig = {
     enabled: false,
     sourceType: 'local',
     customBaseUrl: '',
+    projectIds: '',
+    excludeProjectIds: '',
+    projectNames: '',
+    excludeProjectNames: '',
 };
 
 const marketDefaults: MarketConfig = {
