@@ -36,16 +36,43 @@ function getBaseUrl(config: TodoistConfig): string {
     return TODOIST_BASE;
 }
 
-async function checkHostPermission(config: TodoistConfig): Promise<boolean> {
-    // 自定义接口不需要 Chrome 扩展权限
-    if (config.sourceType === 'custom') return true;
-    if (typeof chrome === 'undefined' || !chrome.permissions) return true;
-    return chrome.permissions.contains({ origins: TODOIST_ORIGINS });
+function getCustomApiOriginPattern(customBaseUrl: string): string | null {
+    try {
+        const parsed = new URL(customBaseUrl.trim());
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return null;
+        }
+        return `${parsed.protocol}//${parsed.hostname}/*`;
+    } catch {
+        return null;
+    }
 }
 
-export async function requestTodoistPermission(): Promise<boolean> {
+function getPermissionOrigins(config: TodoistConfig): string[] | null {
+    if (config.sourceType === 'todoist') {
+        return TODOIST_ORIGINS;
+    }
+    if (config.sourceType === 'custom') {
+        const customOrigin = getCustomApiOriginPattern(config.customBaseUrl);
+        return customOrigin ? [customOrigin] : null;
+    }
+    return null;
+}
+
+async function checkHostPermission(config: TodoistConfig): Promise<boolean> {
+    // 本地模式不需要网络权限
+    if (config.sourceType === 'local') return true;
+    const origins = getPermissionOrigins(config);
+    if (!origins) return false;
     if (typeof chrome === 'undefined' || !chrome.permissions) return true;
-    return chrome.permissions.request({ origins: TODOIST_ORIGINS });
+    return chrome.permissions.contains({ origins });
+}
+
+export async function requestTodoistPermission(config?: TodoistConfig): Promise<boolean> {
+    const origins = config ? getPermissionOrigins(config) : TODOIST_ORIGINS;
+    if (!origins) return false;
+    if (typeof chrome === 'undefined' || !chrome.permissions) return true;
+    return chrome.permissions.request({ origins });
 }
 
 async function todoistFetch(path: string, apiKey: string, options?: RequestInit, baseUrl?: string): Promise<Response> {
@@ -114,6 +141,13 @@ export function useTodoistSync(config: TodoistConfig) {
 
     const fetchTasks = useCallback(async () => {
         const baseUrl = getBaseUrl(config);
+
+        if (config.sourceType === 'custom' && !getCustomApiOriginPattern(config.customBaseUrl)) {
+            setNeedsPermission(false);
+            setLoading(false);
+            setError('invalid custom api url');
+            return;
+        }
 
         const hasPermission = await checkHostPermission(config);
         if (!hasPermission) {

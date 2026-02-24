@@ -80,12 +80,12 @@ export const TodoWidget: React.FC<TodoWidgetProps> = ({ tasks, setTasks, todoist
                 <div className="flex-1 flex items-center justify-center">
                     <button
                         onClick={async () => {
-                            const granted = await requestTodoistPermission();
+                            const granted = await requestTodoistPermission(todoistConfig);
                             if (granted) todoist.refetch();
                         }}
                         className="border border-[var(--color-border)] text-[var(--color-accent)] px-3 py-1 text-xs hover:bg-[var(--color-hover)]"
                     >
-                        [ GRANT TODOIST ACCESS ]
+                        {todoistConfig.sourceType === 'custom' ? '[ GRANT API ACCESS ]' : '[ GRANT TODOIST ACCESS ]'}
                     </button>
                 </div>
             )}
